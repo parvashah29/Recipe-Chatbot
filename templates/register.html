@@ -1,0 +1,179 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="light">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="description"
+        content="Create your Recipe Chatbot account - Get personalized recipe recommendations, save favorites, and more.">
+
+    <title>Sign Up | Recipe Chatbot</title>
+
+    <!-- Google Fonts -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link
+        href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Outfit:wght@400;500;600;700&display=swap"
+        rel="stylesheet">
+
+    <!-- Custom CSS -->
+    <link rel="stylesheet" href="/static/css/modern-style.css">
+
+    <!-- Favicon -->
+    <link rel="icon"
+        href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🍳</text></svg>">
+</head>
+
+<body>
+    <div class="auth-container">
+        <div class="auth-card glass-card">
+            <div class="auth-header">
+                <div class="logo">🍳</div>
+                <h1>Join Recipe Chatbot</h1>
+                <p>Create an account to save recipes and get personalized recommendations</p>
+            </div>
+
+            <form id="register-form" onsubmit="handleRegister(event)">
+                <div class="form-group">
+                    <label for="username" class="form-label">Username</label>
+                    <input type="text" id="username" name="username" class="form-input" placeholder="Choose a username"
+                        required minlength="3" autocomplete="username">
+                </div>
+
+                <div class="form-group">
+                    <label for="email" class="form-label">Email</label>
+                    <input type="email" id="email" name="email" class="form-input" placeholder="Enter your email"
+                        required autocomplete="email">
+                </div>
+
+                <div class="form-group">
+                    <label for="password" class="form-label">Password</label>
+                    <input type="password" id="password" name="password" class="form-input"
+                        placeholder="Create a password" required minlength="6" autocomplete="new-password">
+                    <small style="color: var(--text-muted); font-size: 0.75rem; margin-top: 0.25rem; display: block;">
+                        Must be at least 6 characters
+                    </small>
+                </div>
+
+                <div class="form-group">
+                    <label for="confirm-password" class="form-label">Confirm Password</label>
+                    <input type="password" id="confirm-password" name="confirm-password" class="form-input"
+                        placeholder="Confirm your password" required autocomplete="new-password">
+                </div>
+
+                <div id="error-message" class="error-message"
+                    style="display: none; color: var(--primary); margin-bottom: 1rem; text-align: center;"></div>
+                <div id="success-message" class="success-message"
+                    style="display: none; color: var(--secondary); margin-bottom: 1rem; text-align: center;"></div>
+
+                <button type="submit" class="btn btn-primary" id="register-btn">
+                    <span id="btn-text">Create Account</span>
+                    <span id="btn-loading" style="display: none;">Creating account...</span>
+                </button>
+            </form>
+
+            <div class="auth-footer">
+                <p>Already have an account? <a href="{{ url_for('login') }}">Sign in</a></p>
+                <p style="margin-top: 1rem;"><a href="{{ url_for('chat_page') }}">← Back to chat</a></p>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // Theme initialization
+        const theme = localStorage.getItem('theme') || 'light';
+        document.documentElement.setAttribute('data-theme', theme);
+
+        async function handleRegister(event) {
+            event.preventDefault();
+
+            const username = document.getElementById('username').value;
+            const email = document.getElementById('email').value;
+            const password = document.getElementById('password').value;
+            const confirmPassword = document.getElementById('confirm-password').value;
+            const errorMessage = document.getElementById('error-message');
+            const successMessage = document.getElementById('success-message');
+            const btnText = document.getElementById('btn-text');
+            const btnLoading = document.getElementById('btn-loading');
+            const registerBtn = document.getElementById('register-btn');
+
+            // Reset messages
+            errorMessage.style.display = 'none';
+            successMessage.style.display = 'none';
+
+            // Validate passwords match
+            if (password !== confirmPassword) {
+                errorMessage.textContent = 'Passwords do not match';
+                errorMessage.style.display = 'block';
+                errorMessage.style.animation = 'shake 0.5s ease-in-out';
+                setTimeout(() => {
+                    errorMessage.style.animation = '';
+                }, 500);
+                return;
+            }
+
+            // Show loading state
+            btnText.style.display = 'none';
+            btnLoading.style.display = 'inline';
+            registerBtn.disabled = true;
+
+            try {
+                const response = await fetch('/register', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({ username, email, password }),
+                });
+
+                const data = await response.json();
+
+                if (data.success) {
+                    // Show success
+                    successMessage.textContent = 'Account created successfully! Redirecting to login...';
+                    successMessage.style.display = 'block';
+                    registerBtn.style.background = 'var(--gradient-secondary)';
+                    btnLoading.textContent = 'Success!';
+
+                    setTimeout(() => {
+                        window.location.href = '/login';
+                    }, 1500);
+                } else {
+                    errorMessage.textContent = data.message || 'Registration failed. Please try again.';
+                    errorMessage.style.display = 'block';
+                    errorMessage.style.animation = 'shake 0.5s ease-in-out';
+                    setTimeout(() => {
+                        errorMessage.style.animation = '';
+                    }, 500);
+                }
+            } catch (error) {
+                errorMessage.textContent = 'An error occurred. Please try again.';
+                errorMessage.style.display = 'block';
+            } finally {
+                btnText.style.display = 'inline';
+                btnLoading.style.display = 'none';
+                registerBtn.disabled = false;
+            }
+        }
+    </script>
+
+    <style>
+        @keyframes shake {
+
+            0%,
+            100% {
+                transform: translateX(0);
+            }
+
+            25% {
+                transform: translateX(-10px);
+            }
+
+            75% {
+                transform: translateX(10px);
+            }
+        }
+    </style>
+</body>
+
+</html>

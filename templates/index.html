@@ -1,0 +1,144 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="light">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="description" content="Discover delicious recipes with our AI-powered Recipe Chatbot. Find Indian, Italian, Chinese, and world cuisines with health tips, ingredient substitutions, and smart recommendations.">
+    <meta name="keywords" content="recipes, cooking, chatbot, Indian food, world cuisines, healthy cooking, meal planning">
+    <meta name="author" content="Recipe Chatbot">
+    
+    <title>Recipe Chatbot | Discover Delicious Recipes</title>
+    
+    <!-- Google Fonts -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Outfit:wght@400;500;600;700&display=swap" rel="stylesheet">
+    
+    <!-- Custom CSS -->
+    <link rel="stylesheet" href="/static/css/modern-style.css">
+    
+    <!-- Favicon -->
+    <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🍳</text></svg>">
+</head>
+<body>
+    <div class="chat-container glass-card">
+        <!-- Header -->
+        <header class="chat-header">
+            <div class="chat-header-logo">
+                <div class="logo-icon">🍳</div>
+                <h1>
+                    Recipe Chatbot
+                    <span>Your AI Cooking Companion</span>
+                </h1>
+            </div>
+            
+            <div class="header-actions">
+                <button class="theme-toggle" id="theme-toggle" title="Toggle theme">
+                    <span class="theme-icon">🌙</span>
+                </button>
+                
+                {% if current_user.is_authenticated %}
+                <div class="user-menu">
+                    <div class="user-avatar">{{ current_user.username[0].upper() }}</div>
+                    <span>{{ current_user.username }}</span>
+                </div>
+                <a href="{{ url_for('logout') }}" class="btn btn-secondary" style="padding: 0.5rem 1rem; font-size: 0.875rem;">Logout</a>
+                {% else %}
+                <a href="{{ url_for('login') }}" class="btn btn-secondary" style="padding: 0.5rem 1rem; font-size: 0.875rem;">Login</a>
+                <a href="{{ url_for('register') }}" class="btn btn-primary" style="padding: 0.5rem 1rem; font-size: 0.875rem; width: auto;">Sign Up</a>
+                {% endif %}
+            </div>
+        </header>
+        
+        <!-- Chat Messages -->
+        <div class="chat-messages" id="chat-messages">
+            <!-- Welcome Screen -->
+            <div class="welcome-screen" id="welcome-screen">
+                <div class="welcome-icon">🍳</div>
+                <h2>Welcome to Recipe Chatbot!</h2>
+                <p>I can help you discover delicious recipes, explain health benefits, suggest ingredient substitutions, and much more. What are you craving today?</p>
+                
+                <div class="welcome-suggestions">
+                    <button class="welcome-suggestion" onclick="handleWelcomeSuggestion('Show me popular Indian recipes')">
+                        🍛 Indian Recipes
+                    </button>
+                    <button class="welcome-suggestion" onclick="handleWelcomeSuggestion('Quick breakfast ideas under 30 minutes')">
+                        🌅 Quick Breakfast
+                    </button>
+                    <button class="welcome-suggestion" onclick="handleWelcomeSuggestion('Healthy vegetarian dinner recipes')">
+                        🥗 Vegetarian Dishes
+                    </button>
+                    <button class="welcome-suggestion" onclick="handleWelcomeSuggestion('What can I make with chicken and rice?')">
+                        🍗 Chicken & Rice
+                    </button>
+                    <button class="welcome-suggestion" onclick="handleWelcomeSuggestion('Easy dessert recipes')">
+                        🍰 Easy Desserts
+                    </button>
+                    <button class="welcome-suggestion" onclick="handleWelcomeSuggestion('Low calorie lunch options')">
+                        🥦 Healthy Lunch
+                    </button>
+                </div>
+            </div>
+            
+            <!-- Typing Indicator (hidden by default) -->
+            <div class="message bot typing-indicator hidden" id="typing-indicator">
+                <div class="message-avatar">🍳</div>
+                <div class="typing-dots">
+                    <span class="typing-dot"></span>
+                    <span class="typing-dot"></span>
+                    <span class="typing-dot"></span>
+                </div>
+            </div>
+        </div>
+        
+        <!-- Chat Input -->
+        <div class="chat-input-container">
+            <div class="chat-input-wrapper">
+                <textarea 
+                    class="chat-input" 
+                    id="chat-input" 
+                    placeholder="Ask me about recipes, ingredients, or cuisines..."
+                    rows="1"
+                    autocomplete="off"
+                ></textarea>
+                <button class="send-button" id="send-button" title="Send message">
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                        <line x1="22" y1="2" x2="11" y2="13"></line>
+                        <polygon points="22 2 15 22 11 13 2 9 22 2"></polygon>
+                    </svg>
+                </button>
+            </div>
+            
+            <div class="quick-actions">
+                <button class="quick-action" onclick="handleQuickAction('breakfast')">
+                    🌅 Breakfast
+                </button>
+                <button class="quick-action" onclick="handleQuickAction('lunch')">
+                    🥪 Lunch
+                </button>
+                <button class="quick-action" onclick="handleQuickAction('dinner')">
+                    🍽️ Dinner
+                </button>
+                <button class="quick-action" onclick="handleQuickAction('vegetarian')">
+                    🥬 Vegetarian
+                </button>
+                <button class="quick-action" onclick="handleQuickAction('quick')">
+                    ⚡ Quick & Easy
+                </button>
+                <button class="quick-action" onclick="handleQuickAction('indian')">
+                    🍛 Indian
+                </button>
+                <button class="quick-action" onclick="handleQuickAction('healthy')">
+                    💚 Healthy
+                </button>
+            </div>
+        </div>
+    </div>
+    
+    <!-- Recipe Modal -->
+    <div class="modal-overlay" id="modal-overlay"></div>
+    
+    <!-- Scripts -->
+    <script src="/static/js/chat.js"></script>
+</body>
+</html>
