@@ -54,3 +54,4 @@ uploads/
 *.sqlite3
 # ---- project-specific (large/generated) ----
 image_for_cuisines/
+.pytest_cache/

@@ -160,7 +160,7 @@ function createRecipeCardsHTML(recipes) {
     const cardsHTML = recipes.slice(0, 6).map((recipe, index) => `
     <div class="recipe-card" data-recipe-id="${recipe.id || index}" onclick="openRecipeModal(${JSON.stringify(recipe).replace(/"/g, '&quot;')})">
       <div class="recipe-card-front">
-        <img src="${recipe.image || '/static/images/placeholder.jpg'}" alt="${recipe.name}" class="recipe-card-image" onerror="this.src='/static/images/placeholder.jpg'">
+        <img src="${recipe.image || '/static/images/placeholder.svg'}" alt="${recipe.name}" class="recipe-card-image" onerror="this.src='/static/images/placeholder.svg'">
         <div class="recipe-card-overlay"></div>
         <div class="recipe-card-content">
           <h4 class="recipe-card-title">${recipe.name || 'Untitled Recipe'}</h4>
@@ -284,7 +284,7 @@ function openRecipeModal(recipe) {
     modal.innerHTML = `
     <div class="modal-content">
       <div class="modal-header">
-        <img src="${recipe.image || '/static/images/placeholder.jpg'}" alt="${recipe.name}" onerror="this.src='/static/images/placeholder.jpg'">
+        <img src="${recipe.image || '/static/images/placeholder.svg'}" alt="${recipe.name}" onerror="this.src='/static/images/placeholder.svg'">
         <div class="modal-header-overlay"></div>
         <button class="modal-close" onclick="closeModal()">✕</button>
       </div>

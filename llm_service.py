@@ -6,46 +6,66 @@ recipe explanations, and intelligent responses.
 
 import os
 import re
-import json
-from typing import Dict, List, Optional, Any
-import google.generativeai as genai
+import time
+from typing import Dict, List, Optional
 from fractions import Fraction
 
-# Configure Gemini API
-# You'll need to set your API key as an environment variable or replace this
-GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "YOUR_GEMINI_API_KEY_HERE")
+# Optional LLM: the app works fully without it (rule-based fallbacks everywhere).
+MODEL_CHAIN = [m.strip() for m in os.getenv(
+    "GEMINI_MODELS",
+    "gemini-3-flash-preview,gemini-3.1-flash-lite,gemini-2.5-flash-lite,gemini-2.0-flash",
+).split(",") if m.strip()]
+MAX_RETRIES = 2
+
 
 class LLMService:
     def __init__(self):
-        """Initialize the LLM service with Gemini."""
-        genai.configure(api_key=GEMINI_API_KEY)
-        self.model = genai.GenerativeModel('gemini-1.5-flash')
-        self.chat_history = []
-        
+        """Gemini wrapper (google-genai SDK). Disabled when GEMINI_API_KEY is absent."""
+        self.api_key = os.getenv("GEMINI_API_KEY", "").strip()
+        self.client = None
+        if self.is_configured():
+            try:
+                from google import genai
+                self.client = genai.Client(api_key=self.api_key)
+            except Exception as e:  # SDK missing or bad config -> run without LLM
+                print(f"LLM disabled: {type(e).__name__}")
+                self.client = None
+
     def is_configured(self) -> bool:
-        """Check if the API key is properly configured."""
-        return GEMINI_API_KEY != "YOUR_GEMINI_API_KEY_HERE" and len(GEMINI_API_KEY) > 10
-    
-    def generate_response(self, prompt: str, context: str = "") -> str:
-        """Generate a response using Gemini."""
-        if not self.is_configured():
+        """True when an API key is present and the client could be built."""
+        if self.client is not None:
+            return True
+        return len(self.api_key) > 10 and self.api_key != "YOUR_GEMINI_API_KEY_HERE"
+
+    def _generate(self, prompt: str) -> Optional[str]:
+        """Try each model in the chain with retries on transient errors. None on failure."""
+        if self.client is None:
             return None
-            
-        try:
-            full_prompt = f"{context}\n\nUser: {prompt}" if context else prompt
-            response = self.model.generate_content(full_prompt)
-            return response.text
-        except Exception as e:
-            print(f"LLM Error: {e}")
-            return None
-    
+        for model in MODEL_CHAIN:
+            for attempt in range(MAX_RETRIES + 1):
+                try:
+                    resp = self.client.models.generate_content(model=model, contents=prompt)
+                    text = (resp.text or "").strip()
+                    if text:
+                        return text
+                    break  # empty answer: try next model
+                except Exception as e:
+                    msg = str(e)
+                    transient = any(c in msg for c in ("503", "429", "500", "UNAVAILABLE", "overloaded"))
+                    if transient and attempt < MAX_RETRIES:
+                        time.sleep(0.5 * (2 ** attempt))
+                        continue
+                    break  # 404 (retired model), auth, etc: next model
+        return None
+
+    def generate_response(self, prompt: str, context: str = "") -> Optional[str]:
+        """Generate a free-form response, or None if the LLM is unavailable."""
+        full_prompt = f"{context}\n\nUser: {prompt}" if context else prompt
+        return self._generate(full_prompt)
+
     def explain_recipe_health(self, recipe: Dict) -> str:
         """Generate health explanation for a recipe."""
-        if not self.is_configured():
-            return self._fallback_health_explanation(recipe)
-            
-        try:
-            prompt = f"""
+        prompt = f"""
             Analyze this recipe and explain its health benefits in a friendly, conversational way.
             Keep the response concise (3-4 sentences) but informative.
             
@@ -59,17 +79,12 @@ class LLMService:
             2. Healthy ingredients highlighted
             3. Any health considerations
             """
-            
-            response = self.model.generate_content(prompt)
-            return response.text
-        except Exception as e:
-            print(f"Health explanation error: {e}")
-            return self._fallback_health_explanation(recipe)
+        return self._generate(prompt) or self._fallback_health_explanation(recipe)
     
     def _fallback_health_explanation(self, recipe: Dict) -> str:
         """Fallback health explanation when LLM is not available."""
-        diet = recipe.get('diet', '').lower()
-        ingredients = recipe.get('ingredients', '').lower()
+        diet = str(recipe.get('diet') or '').lower()
+        ingredients = str(recipe.get('ingredients') or '').lower()
         
         health_points = []
         
@@ -162,8 +177,8 @@ class LLMService:
     def generate_cooking_tips(self, recipe: Dict) -> List[str]:
         """Generate contextual cooking tips for a recipe."""
         tips = []
-        ingredients = recipe.get('ingredients', '').lower()
-        cuisine = recipe.get('cuisine', '').lower()
+        ingredients = str(recipe.get('ingredients') or '').lower()
+        cuisine = str(recipe.get('cuisine') or '').lower()
         
         # Ingredient-based tips
         if 'rice' in ingredients:
@@ -189,11 +204,7 @@ class LLMService:
     
     def enhance_response(self, query: str, base_response: str, recipe_data: Optional[Dict] = None) -> str:
         """Enhance a response with LLM if available, otherwise return base response."""
-        if not self.is_configured():
-            return base_response
-            
-        try:
-            prompt = f"""
+        prompt = f"""
             You are a friendly, knowledgeable cooking assistant. Enhance this response to be more 
             conversational and helpful. Keep it concise but warm.
             
@@ -202,11 +213,7 @@ class LLMService:
             
             Add a brief, friendly touch while keeping all the important information.
             """
-            
-            response = self.model.generate_content(prompt)
-            return response.text
-        except:
-            return base_response
+        return self._generate(prompt) or base_response
 
 
 class RecipeScaler:
@@ -321,7 +328,7 @@ class RecipeScaler:
                 if qty is not None:
                     scaled_qty = qty * scale_factor
                     formatted_qty = cls.format_quantity(scaled_qty)
-                    scaled_line = line[:match.start()] + formatted_qty + line[match.end():]
+                    scaled_line = line[:match.start()] + formatted_qty + ' ' + line[match.end():]
                     scaled_lines.append(scaled_line)
                 else:
                     scaled_lines.append(line)

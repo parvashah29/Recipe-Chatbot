@@ -1,15 +1,31 @@
-from flask import Flask, render_template, request, jsonify, session, redirect, url_for, send_from_directory
-from chatbot import Chatbot
-from flask_sqlalchemy import SQLAlchemy
-from flask_login import LoginManager, UserMixin, login_user, login_required, logout_user, current_user
-from werkzeug.security import generate_password_hash, check_password_hash
 import os
-from datetime import datetime
-from flask_migrate import Migrate
+import re
+import secrets
+from datetime import datetime, timezone
+
+from dotenv import load_dotenv
+from flask import (Flask, abort, jsonify, redirect, render_template, request,
+                   send_from_directory, session, url_for)
+from flask_login import (LoginManager, UserMixin, current_user, login_required,
+                         login_user, logout_user)
+from flask_sqlalchemy import SQLAlchemy
+from werkzeug.security import check_password_hash, generate_password_hash
+
+load_dotenv()
+
+from chatbot import Chatbot  # noqa: E402  (after load_dotenv so env-driven config is seen)
+
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+
+
+def _utcnow():
+    return datetime.now(timezone.utc).replace(tzinfo=None)
+
 
 app = Flask(__name__, static_url_path='/static')
-app.config['SECRET_KEY'] = os.urandom(24)
-app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///recipes.db'
+# Set SECRET_KEY in .env for sessions that survive restarts; otherwise a random key is used.
+app.config['SECRET_KEY'] = os.getenv('SECRET_KEY') or secrets.token_hex(32)
+app.config['SQLALCHEMY_DATABASE_URI'] = os.getenv('DATABASE_URL', 'sqlite:///recipes.db')
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 
 db = SQLAlchemy(app)
@@ -17,37 +33,60 @@ login_manager = LoginManager()
 login_manager.init_app(app)
 login_manager.login_view = 'login'
 
-# Instantiate chatbot (make sure your CSV now includes the image_file column)
+# Image folder is optional (git-ignored, ~840 MB). See README.
 chatbot = Chatbot()
+IMAGE_DIR = chatbot.image_dir
+STATIC_IMAGE_DIR = os.path.join(BASE_DIR, 'static', 'images')
 
-# Initialize Flask-Migrate
-migrate = Migrate(app, db)
 
-# Database Models
 class User(UserMixin, db.Model):
     id = db.Column(db.Integer, primary_key=True)
     username = db.Column(db.String(80), unique=True, nullable=False)
     email = db.Column(db.String(120), unique=True, nullable=False)
-    password_hash = db.Column(db.String(128))
+    password_hash = db.Column(db.String(256))
     comments = db.relationship('Comment', backref='author', lazy=True)
     favorites = db.relationship('Favorite', backref='user', lazy=True)
+
 
 class Comment(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     text = db.Column(db.Text, nullable=False)
-    timestamp = db.Column(db.DateTime, default=datetime.utcnow)
+    timestamp = db.Column(db.DateTime, default=_utcnow)
     user_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=False)
     recipe_id = db.Column(db.Integer, nullable=False)
+
 
 class Favorite(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     user_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=False)
     recipe_id = db.Column(db.Integer, nullable=False)
-    timestamp = db.Column(db.DateTime, default=datetime.utcnow)
+    timestamp = db.Column(db.DateTime, default=_utcnow)
+
+
+with app.app_context():
+    db.create_all()
+
+
+def _json_body():
+    data = request.get_json(silent=True)
+    return data if isinstance(data, dict) else {}
+
+
+def _recipe_id(value):
+    """Validate a 1-based recipe id; None when it is not an existing recipe."""
+    try:
+        rid = int(value)
+    except (TypeError, ValueError):
+        return None
+    return rid if 1 <= rid <= len(chatbot.df) else None
+
 
 @login_manager.user_loader
 def load_user(user_id):
-    return User.query.get(int(user_id))
+    try:
+        return db.session.get(User, int(user_id))
+    except (TypeError, ValueError):
+        return None
 
 # Routes
 @app.route('/')
@@ -65,52 +104,62 @@ def homepage():
 @app.route('/login', methods=['GET', 'POST'])
 def login():
     if request.method == 'POST':
-        data = request.json
-        user = User.query.filter_by(username=data['username']).first()
-        if user and check_password_hash(user.password_hash, data['password']):
+        data = _json_body()
+        username = str(data.get('username') or '').strip()
+        password = str(data.get('password') or '')
+        user = User.query.filter_by(username=username).first() if username else None
+        if user and check_password_hash(user.password_hash, password):
             login_user(user)
             return jsonify({'success': True})
-        return jsonify({'success': False, 'message': 'Invalid username or password'})
+        return jsonify({'success': False, 'message': 'Invalid username or password'}), 401
     return render_template('login.html')
+
 
 @app.route('/register', methods=['GET', 'POST'])
 def register():
     if request.method == 'POST':
-        data = request.json
-        if User.query.filter_by(username=data['username']).first():
-            return jsonify({'success': False, 'message': 'Username already exists'})
-        if User.query.filter_by(email=data['email']).first():
-            return jsonify({'success': False, 'message': 'Email already registered'})
-        
-        user = User(
-            username=data['username'],
-            email=data['email'],
-            password_hash=generate_password_hash(data['password'])
-        )
+        data = _json_body()
+        username = str(data.get('username') or '').strip()
+        email = str(data.get('email') or '').strip().lower()
+        password = str(data.get('password') or '')
+        if not username or len(username) > 80:
+            return jsonify({'success': False, 'message': 'A username (max 80 characters) is required'}), 400
+        if not re.fullmatch(r'[^@\s]+@[^@\s]+\.[^@\s]+', email) or len(email) > 120:
+            return jsonify({'success': False, 'message': 'A valid email is required'}), 400
+        if len(password) < 6:
+            return jsonify({'success': False, 'message': 'Password must be at least 6 characters'}), 400
+        if User.query.filter_by(username=username).first():
+            return jsonify({'success': False, 'message': 'Username already exists'}), 409
+        if User.query.filter_by(email=email).first():
+            return jsonify({'success': False, 'message': 'Email already registered'}), 409
+
+        user = User(username=username, email=email, password_hash=generate_password_hash(password))
         db.session.add(user)
         db.session.commit()
         return jsonify({'success': True})
     return render_template('register.html')
 
+
 @app.route('/logout')
 @login_required
 def logout():
     logout_user()
-    return redirect(url_for('home'))
+    return redirect(url_for('chat_page'))
+
 
 @app.route('/chat', methods=['POST'])
 def chat():
-    user_message = request.json.get('message', '')
+    user_message = _json_body().get('message', '')
+    if not isinstance(user_message, str) or not user_message.strip():
+        return jsonify({'error': 'message is required'}), 400
     user_name = current_user.username if current_user.is_authenticated else None
     response = chatbot.get_response(user_message, user_name=user_name)
     
     # Get follow-up suggestions based on current context
     current_recipe = None
-    if hasattr(chatbot, 'current_recipe') and chatbot.current_recipe is not None:
-        if hasattr(chatbot.current_recipe, 'to_dict'):
-            current_recipe = chatbot.current_recipe.to_dict()
-        else:
-            current_recipe = chatbot.current_recipe
+    if chatbot.current_recipe is not None:
+        current_recipe = (chatbot.current_recipe if isinstance(chatbot.current_recipe, dict)
+                          else chatbot.recipe_to_dict(chatbot.current_recipe))
     
     suggestions = chatbot._get_follow_up_suggestions(current_recipe)
     
@@ -131,36 +180,42 @@ def chat():
 @app.route('/favorite', methods=['POST'])
 @login_required
 def favorite_recipe():
-    recipe_id = request.json.get('recipe_id')
-    if not recipe_id:
-        return jsonify({'success': False, 'message': 'Recipe ID required'})
-    
+    recipe_id = _recipe_id(_json_body().get('recipe_id'))
+    if recipe_id is None:
+        return jsonify({'success': False, 'message': 'A valid recipe ID is required'}), 400
+
     existing = Favorite.query.filter_by(user_id=current_user.id, recipe_id=recipe_id).first()
     if existing:
         db.session.delete(existing)
         db.session.commit()
         return jsonify({'success': True, 'action': 'removed'})
-    
-    favorite = Favorite(user_id=current_user.id, recipe_id=recipe_id)
-    db.session.add(favorite)
+
+    db.session.add(Favorite(user_id=current_user.id, recipe_id=recipe_id))
     db.session.commit()
     return jsonify({'success': True, 'action': 'added'})
+
+
+@app.route('/favorites')
+@login_required
+def list_favorites():
+    favs = Favorite.query.filter_by(user_id=current_user.id).order_by(Favorite.timestamp.desc()).all()
+    return jsonify({'favorites': [
+        {'recipe_id': f.recipe_id, 'name': str(chatbot.df.iloc[f.recipe_id - 1]['name'])}
+        for f in favs if 1 <= f.recipe_id <= len(chatbot.df)]})
+
 
 @app.route('/comment', methods=['POST'])
 @login_required
 def add_comment():
-    data = request.json
-    if not data.get('recipe_id') or not data.get('text'):
-        return jsonify({'success': False, 'message': 'Recipe ID and comment text required'})
-    
-    comment = Comment(
-        text=data['text'],
-        recipe_id=data['recipe_id'],
-        user_id=current_user.id
-    )
+    data = _json_body()
+    recipe_id = _recipe_id(data.get('recipe_id'))
+    text = str(data.get('text') or '').strip()
+    if recipe_id is None or not text:
+        return jsonify({'success': False, 'message': 'Recipe ID and comment text required'}), 400
+
+    comment = Comment(text=text[:2000], recipe_id=recipe_id, user_id=current_user.id)
     db.session.add(comment)
     db.session.commit()
-    
     return jsonify({
         'success': True,
         'comment': {
@@ -170,6 +225,15 @@ def add_comment():
             'timestamp': comment.timestamp.strftime('%Y-%m-%d %H:%M:%S')
         }
     })
+
+
+@app.route('/recipe/<int:recipe_id>')
+def recipe_detail(recipe_id):
+    """JSON detail for one recipe (1-based row number, as shown in recipe lists)."""
+    if _recipe_id(recipe_id) is None:
+        abort(404)
+    return jsonify(chatbot.recipe_to_dict(chatbot.df.iloc[recipe_id - 1]))
+
 
 @app.route('/comments/<int:recipe_id>')
 def get_comments(recipe_id):
@@ -183,17 +247,32 @@ def get_comments(recipe_id):
         } for c in comments]
     })
 
-# Route to serve static images from the image_for_cuisines/data folder.
 @app.route('/static/images/<path:filename>')
 def serve_image(filename):
-    return send_from_directory('image_for_cuisines/data', filename)
+    """Serve recipe photos from the (optional, git-ignored) image folder, then the bundled
+    static/images subset. Missing files return 404 and the UI swaps in the placeholder."""
+    for folder in (IMAGE_DIR, STATIC_IMAGE_DIR):
+        if os.path.isdir(folder):
+            try:
+                return send_from_directory(folder, filename)
+            except Exception:  # NotFound / bad path: try next folder
+                continue
+    abort(404)
+
+
+@app.route('/health')
+def health():
+    return jsonify({'status': 'ok', 'recipes': int(len(chatbot.df)),
+                    'llm': chatbot.llm_service.is_configured(),
+                    'images_dir_present': os.path.isdir(IMAGE_DIR)})
+
 
 @app.route('/save_chat', methods=['POST'])
 def save_chat():
     if not current_user.is_authenticated:
         return ('', 204)
     chat_history = session.get('chat_history', [])
-    data = request.get_json()
+    data = _json_body()
     chat_history.append({
         'message': data.get('message', ''),
         'timestamp': datetime.now().strftime('%Y-%m-%d %H:%M')
@@ -202,6 +281,6 @@ def save_chat():
     return ('', 204)
 
 if __name__ == '__main__':
-    with app.app_context():
-        db.create_all()  # Create database tables if they don't exist.
-    app.run(debug=True, port=5001)
+    app.run(debug=os.getenv('FLASK_DEBUG', '0') == '1',
+            host=os.getenv('HOST', '127.0.0.1'),
+            port=int(os.getenv('PORT', '5001')))
